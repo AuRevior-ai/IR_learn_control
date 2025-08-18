@@ -1,0 +1,86 @@
+ESP32 DEVKIT-C 开发板引脚示意图 (ASCII格式)
+===============================================
+
+                    ┌─────────── USB-C接口 ──────────┐
+                    │                                │
+         左侧引脚   │         ESP32 DEVKIT-C         │   右侧引脚
+       ┌───────────┴────────────────────────────────┴───────────┐
+    EN │●15                                                 15●│ GPIO23/D23
+   VP/ │●14                                                 14●│ GPIO22/D22
+GPIO36 │                                                      │
+   VN/ │●13                                                 13●│ GPIO1/TXD
+GPIO39 │                                                      │
+   D34/│●12                                                 12●│ GPIO3/RXD
+GPIO34 │                                                      │
+   D35/│●11          ┌─────────────────┐                  11●│ GPIO21/D21
+GPIO35 │             │                 │                     │
+   D32/│●10          │    ESP32-D0WDQ6 │                  10●│ GPIO19/D19
+GPIO32 │             │      主芯片     │                     │
+   D33/│● 9          │                 │                   9●│ GPIO18/D18
+GPIO33 │             └─────────────────┘                     │
+   D25/│● 8                                                 8●│ GPIO5/D5
+GPIO25 │                                                      │
+   D26/│● 7                                                 7●│ GPIO17/D17
+GPIO26 │                                                      │
+   D27/│● 6          ┌──┐      ┌──┐                         6●│ GPIO16/D16
+GPIO27 │             │  │      │  │                           │
+   D14/│● 5          │  │      │  │                         5●│ GPIO4/D4
+GPIO14 │             │  │      │  │                           │
+   D12/│● 4          │  │      │  │                         4●│ GPIO2/D2
+GPIO12 │             │  │      │  │                           │
+   D13/│● 3          │  │      │  │                         3●│ GPIO15/D15
+GPIO13 │             │  │      │  │                           │
+   GND │● 2          │  │      │  │                         2●│ GND
+       │             │  │      │  │                           │
+   VIN │● 1          │  │      │  │                         1●│ 3V3
+       │             └──┘      └──┘                           │
+       └─────────────────┬──────┬─────────────────────────────┘
+                       [BOOT] [RST]
+                         按键   按键
+
+引脚功能说明：
+============
+
+左侧引脚 (从上到下):
+- EN (pin15): 使能引脚，复位控制
+- VP/GPIO36 (pin14): 仅输入，ADC1_CH0
+- VN/GPIO39 (pin13): 仅输入，ADC1_CH3  
+- D34/GPIO34 (pin12): 仅输入，ADC1_CH6
+- D35/GPIO35 (pin11): 仅输入，ADC1_CH7
+- D32/GPIO32 (pin10): GPIO，ADC1_CH4，TOUCH9
+- D33/GPIO33 (pin9): GPIO，ADC1_CH5，TOUCH8
+- D25/GPIO25 (pin8): GPIO，ADC2_CH8，DAC1
+- D26/GPIO26 (pin7): GPIO，ADC2_CH9，DAC2
+- D27/GPIO27 (pin6): GPIO，ADC2_CH7，TOUCH7
+- D14/GPIO14 (pin5): GPIO，ADC2_CH6，TOUCH6
+- D12/GPIO12 (pin4): GPIO，ADC2_CH5，TOUCH5，HSPI_MISO
+- D13/GPIO13 (pin3): GPIO，ADC2_CH4，TOUCH4，HSPI_MOSI
+- GND (pin2): 地线
+- VIN (pin1): 外部电源输入(5V)
+
+右侧引脚 (从上到下):
+- GPIO23/D23 (pin15): GPIO，VSPI_MOSI
+- GPIO22/D22 (pin14): GPIO，I2C_SCL
+- GPIO1/TXD (pin13): UART0发送，GPIO
+- GPIO3/RXD (pin12): UART0接收，GPIO
+- GPIO21/D21 (pin11): GPIO，I2C_SDA
+- GPIO19/D19 (pin10): GPIO，VSPI_MISO
+- GPIO18/D18 (pin9): GPIO，VSPI_CLK
+- GPIO5/D5 (pin8): GPIO，VSPI_CS0
+- GPIO17/D17 (pin7): GPIO
+- GPIO16/D16 (pin6): GPIO
+- GPIO4/D4 (pin5): GPIO，ADC2_CH0，TOUCH0
+- GPIO2/D2 (pin4): GPIO，ADC2_CH2，TOUCH2，内置LED
+- GPIO15/D15 (pin3): GPIO，ADC2_CH3，TOUCH3，HSPI_CS0
+- GND (pin2): 地线
+- 3V3 (pin1): 3.3V电源输出
+
+控制按键:
+- BOOT: GPIO0，下载模式/运行模式切换
+- RST: 复位按键，重启ESP32
+
+注意事项:
+- GPIO36-39 仅能用作输入
+- GPIO6-11 内部连接Flash，不建议使用
+- GPIO2 连接板载LED
+- 某些引脚启动时有特殊状态要求
