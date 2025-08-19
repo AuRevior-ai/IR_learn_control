@@ -29,11 +29,13 @@ void showSignalInfo(int id);
 void showRawData(int id);
 void testTransmitter();
 void verifySignal(int id); // 新增：验证信号稳定性
+void continuousVerifySignal(int id); // 新增：持续验证信号
 void showDetailedSignalInfo(int id); // 新增：显示详细信号信息
 void ledSignalFlash(); // 新增：信号接收LED闪烁
 void ledStartupFlash(); // 新增：启动LED闪烁
 void testGPIO2(); // 新增：测试GPIO2引脚状态
 void diagnosePullupResistor(); // 新增：诊断上拉电阻问题
+void toggleRMT(); // 新增：切换RMT硬件发射器状态
 
 // 程序状态
 enum SystemState {
@@ -255,10 +257,29 @@ void processCommand(String command) {
     } else {
       Serial.println("错误: 无效的信号ID，请输入正整数");
     }
+  } else if (command.startsWith("continuous ")) {
+    String idStr = command.substring(11);
+    idStr.trim();
+    // 清理尖括号
+    idStr.replace("<", "");
+    idStr.replace(">", "");
+    idStr.replace("[", "");
+    idStr.replace("]", "");
+    idStr.trim();
+    int id = idStr.toInt();
+    if (id > 0) {
+      continuousVerifySignal(id);
+    } else {
+      Serial.println("错误: 无效的信号ID，请输入正整数");
+    }
   } else if (command == "gpio") {
     testGPIO2();
+  } else if (command == "testgpio4") {
+    irTransmitter.testGPIO4();
   } else if (command == "diag") {
     diagnosePullupResistor();
+  } else if (command == "rmt") {
+    toggleRMT();
   } else {
     Serial.println("未知命令，输入 'help' 查看可用命令");
   }
@@ -284,13 +305,17 @@ void showHelp() {
   }
   Serial.println("  repeat <id> <times> - 重复发射信号");
   Serial.println("  delete <id>  - 删除指定ID的信号");
-  Serial.println("\n🔍 调试命令：");
+  Serial.println("\n🔍 验证命令：");
+  Serial.println("  verify <id>  - 🆕 标准验证(发射5次，间隔2秒)");
+  Serial.println("  continuous <id> - 🎯 持续验证(每0.5秒发射，持续10秒)");
+  Serial.println("\n🔧 调试命令：");
   Serial.println("  info <id>    - 显示信号基本信息");
   Serial.println("  detail <id>  - 🆕 显示超详细信号解析(含NEC协议完整分析)");
   Serial.println("  raw <id>     - 显示原始信号数据");
-  Serial.println("  verify <id>  - 🆕 验证信号稳定性(连续发射测试)");
   Serial.println("  gpio         - 🆕 测试GPIO2引脚精确电压");
+  Serial.println("  testgpio4    - 🆕 测试GPIO4红外发射引脚输出");
   Serial.println("  diag         - 🆕 诊断上拉电阻问题");
+  Serial.println("  rmt          - 🆕 切换RMT硬件发射器状态");
   
   if (isLearning) {
     Serial.println("\n🎯 学习模式提示：");
@@ -298,6 +323,11 @@ void showHelp() {
     Serial.println("  📡 发射后观察是否能接收到相同信号验证功能");
     Serial.println("  🔄 学习模式下发射不会退出学习状态");
   }
+  
+  Serial.println("\n🚀 新功能亮点：");
+  Serial.println("  🎯 RMT硬件发射器 - 为UNKNOWN协议提供更稳定的发射");
+  Serial.println("  🔄 持续验证模式 - 实时观察信号稳定性");
+  Serial.println("  📊 智能协议选择 - 自动选择最佳发射方式");
   
   Serial.println();
 }
@@ -539,6 +569,13 @@ void sendSignal(int id) {
     Serial.printf("📋 协议: %s, 值: 0x%08X, 位数: %d\n", 
                  typeToString(signal->protocol, false).c_str(), signal->value, signal->bits);
     
+    // 显示发射方式
+    if (signal->protocol == UNKNOWN && irTransmitter.isRMTEnabled()) {
+      Serial.println("🚀 使用RMT硬件发射器 (UNKNOWN协议优化)");
+    } else {
+      Serial.println("📡 使用标准协议发射器");
+    }
+    
     // 保存当前状态，避免在学习模式下改变状态
     SystemState previousState = currentState;
     bool wasLearning = (currentState == LEARNING);
@@ -549,22 +586,31 @@ void sendSignal(int id) {
     
     digitalWrite(STATUS_LED_PIN, HIGH);
     
-    // 改进的重试机制
+    // 改进的重试机制，针对UNKNOWN协议优化
     bool success = false;
-    for (int attempt = 1; attempt <= 3; attempt++) {
+    int maxAttempts = (signal->protocol == UNKNOWN) ? 2 : 3;  // UNKNOWN协议减少重试次数
+    
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
       Serial.printf("🔄 尝试发射第 %d 次...\n", attempt);
       
-      // 使用优化的发射参数：增加重复次数提高稳定性
-      success = irTransmitter.sendSignal(signal->protocol, signal->value, signal->bits,
-                                        signal->rawData, signal->rawLength, 2);
+      // 使用优化的发射参数
+      if (signal->protocol == UNKNOWN) {
+        // UNKNOWN协议使用RMT硬件发射，不需要额外重复
+        success = irTransmitter.sendSignal(signal->protocol, signal->value, signal->bits,
+                                          signal->rawData, signal->rawLength, 0);
+      } else {
+        // 已知协议增加重复次数提高稳定性
+        success = irTransmitter.sendSignal(signal->protocol, signal->value, signal->bits,
+                                          signal->rawData, signal->rawLength, 2);
+      }
       
       if (success) {
         Serial.printf("✅ 第 %d 次发射成功！\n", attempt);
         break;
       } else {
         Serial.printf("❌ 第 %d 次发射失败\n", attempt);
-        if (attempt < 3) {
-          delay(300); // 增加重试间隔
+        if (attempt < maxAttempts) {
+          delay(200); // 减少重试间隔
         }
       }
     }
@@ -581,7 +627,10 @@ void sendSignal(int id) {
     if (success) {
       Serial.println("✅ 发射完成");
     } else {
-      Serial.println("❌ 发射失败 - 重试3次后仍然失败");
+      Serial.printf("❌ 发射失败 - 重试%d次后仍然失败\n", maxAttempts);
+      if (signal->protocol == UNKNOWN) {
+        Serial.println("💡 提示: 尝试使用 'rmt' 命令切换发射器模式");
+      }
     }
   } else {
     Serial.printf("❌ 错误: 信号 ID %d 不存在\n", id);
@@ -850,7 +899,7 @@ void testGPIO2() {
   Serial.println("测试完成！\n");
 }
 
-// 新增：验证信号稳定性
+// 新增：验证信号稳定性 - 改进版本，显示接收结果
 void verifySignal(int id) {
   IRSignal* signal = irStorage.getSignal(id);
   if (!signal || !signal->isValid) {
@@ -861,6 +910,8 @@ void verifySignal(int id) {
   Serial.printf("🧪 开始验证信号 ID: %d (%s)\n", id, signal->name);
   Serial.printf("📋 协议: %s, 值: 0x%08X, 位数: %d\n", 
                typeToString(signal->protocol, false).c_str(), signal->value, signal->bits);
+  Serial.println("💡 将发射5次信号，每次间隔2秒，同时监控接收结果");
+  Serial.println("====================================");
   
   // 保存当前状态，验证后恢复
   SystemState previousState = currentState;
@@ -868,9 +919,124 @@ void verifySignal(int id) {
   
   currentState = TRANSMITTING;
   
-  // 使用发射器的验证功能
-  bool result = irTransmitter.verifySignal(signal->protocol, signal->value, signal->bits,
-                                          signal->rawData, signal->rawLength, 5);
+  const int TEST_COUNT = 5;
+  const unsigned long RECEIVE_TIMEOUT = 500;  // 接收超时500ms
+  
+  int sendSuccessCount = 0;
+  int receiveCount = 0;
+  int receiveMatchCount = 0;
+  
+  for (int i = 1; i <= TEST_COUNT; i++) {
+    Serial.printf("\n📡 第 %d/%d 次发射测试...\n", i, TEST_COUNT);
+    
+    bool sendSuccess = false;
+    
+    // 根据协议选择最佳发射方式
+    if (signal->protocol == UNKNOWN && signal->rawData && signal->rawLength > 0) {
+      if (irTransmitter.isRMTEnabled()) {
+        Serial.println("  📡 使用RMT硬件发射器");
+      } else {
+        Serial.println("  📡 使用软件发射器");
+      }
+      sendSuccess = irTransmitter.sendSignal(signal->protocol, signal->value, signal->bits,
+                                            signal->rawData, signal->rawLength, 0);
+    } else {
+      Serial.println("  📡 使用协议发射器");
+      sendSuccess = irTransmitter.sendSignal(signal->protocol, signal->value, signal->bits,
+                                            signal->rawData, signal->rawLength, 1);
+    }
+    
+    if (sendSuccess) {
+      sendSuccessCount++;
+      Serial.printf("  ✅ 发射成功\n");
+    } else {
+      Serial.printf("  ❌ 发射失败\n");
+    }
+    
+    // 发射后立即监控接收器反应
+    unsigned long receiveStartTime = millis();
+    bool receivedSignal = false;
+    bool signalMatches = false;
+    
+    Serial.printf("  🔍 监控接收器反应 (超时%dms)...\n", RECEIVE_TIMEOUT);
+    
+    while (millis() - receiveStartTime < RECEIVE_TIMEOUT) {
+      if (irReceiver.isAvailable() && irReceiver.decode()) {
+        receivedSignal = true;
+        receiveCount++;
+        
+        // 获取接收到的信号数据
+        uint32_t receivedValue = irReceiver.getValue();
+        uint16_t receivedBits = irReceiver.getBits();
+        decode_type_t receivedProtocol = irReceiver.getProtocol();
+        
+        // 检查信号是否匹配
+        bool protocolMatch = (receivedProtocol == signal->protocol);
+        bool valueMatch = (receivedValue == signal->value);
+        bool bitsMatch = (receivedBits == signal->bits);
+        
+        if (protocolMatch && valueMatch && bitsMatch) {
+          signalMatches = true;
+          receiveMatchCount++;
+          Serial.printf("  ✅ 接收验证: 协议=%s, 值=0x%08X, 位数=%d ✅完全匹配\n", 
+                       typeToString(receivedProtocol, false).c_str(), 
+                       receivedValue, receivedBits);
+        } else {
+          Serial.printf("  ⚠️ 接收验证: 协议=%s, 值=0x%08X, 位数=%d ❌不匹配\n", 
+                       typeToString(receivedProtocol, false).c_str(), 
+                       receivedValue, receivedBits);
+          if (!protocolMatch) Serial.printf("    ❌ 协议差异: 期望%s ≠ 实际%s\n", 
+                                           typeToString(signal->protocol, false).c_str(),
+                                           typeToString(receivedProtocol, false).c_str());
+          if (!valueMatch) Serial.printf("    ❌ 数值差异: 期望0x%08X ≠ 实际0x%08X\n", 
+                                        signal->value, receivedValue);
+          if (!bitsMatch) Serial.printf("    ❌ 位数差异: 期望%d ≠ 实际%d\n", 
+                                       signal->bits, receivedBits);
+        }
+        
+        // 短暂延时避免重复接收同一信号
+        delay(50);
+        break;
+      }
+      delay(5);
+    }
+    
+    if (!receivedSignal) {
+      Serial.println("  ❌ 接收超时，未检测到信号");
+    }
+    
+    // 测试间隔
+    if (i < TEST_COUNT) {
+      Serial.println("  ⏳ 等待 2 秒...");
+      delay(2000);
+    }
+  }
+  
+  // 计算各种成功率
+  float sendSuccessRate = (float)sendSuccessCount / TEST_COUNT * 100;
+  float receiveRate = (float)receiveCount / TEST_COUNT * 100;
+  float matchRate = receiveCount > 0 ? (float)receiveMatchCount / receiveCount * 100 : 0;
+  float overallSuccessRate = (float)receiveMatchCount / TEST_COUNT * 100;
+  
+  Serial.println("\n🏁 ========== 验证结果总结 ==========");
+  Serial.printf("📊 发射结果: %d/%d 次成功 (%.1f%%)\n", 
+               sendSuccessCount, TEST_COUNT, sendSuccessRate);
+  Serial.printf("📡 接收结果: %d/%d 次接收 (%.1f%%)\n", 
+               receiveCount, TEST_COUNT, receiveRate);
+  Serial.printf("✅ 匹配结果: %d/%d 次匹配 (%.1f%%)\n", 
+               receiveMatchCount, receiveCount, matchRate);
+  Serial.printf("🎯 整体成功率: %d/%d (%.1f%%)\n", 
+               receiveMatchCount, TEST_COUNT, overallSuccessRate);
+  
+  if (overallSuccessRate >= 80) {
+    Serial.println("✅ 信号稳定性良好");
+  } else if (overallSuccessRate >= 60) {
+    Serial.println("⚠️ 信号稳定性一般，建议重新学习");
+  } else {
+    Serial.println("❌ 信号不稳定，需要重新学习");
+  }
+  
+  Serial.println("====================================");
   
   // 恢复状态
   currentState = previousState;
@@ -879,7 +1045,7 @@ void verifySignal(int id) {
     Serial.println("🎯 继续学习模式，请继续按遥控器测试接收...");
   }
   
-  if (result) {
+  if (overallSuccessRate >= 80) {
     Serial.printf("✅ 信号 ID %d 验证通过，稳定性良好\n", id);
   } else {
     Serial.printf("⚠️ 信号 ID %d 验证失败，建议重新学习\n", id);
@@ -942,4 +1108,216 @@ void diagnosePullupResistor() {
   Serial.println("\n🔗 硬件连接建议:");
   Serial.println("3.3V ----[4.7kΩ]---- GPIO2 ---- VS1838B OUT");
   Serial.println("================================\n");
+}
+
+// 新增：持续验证信号稳定性 - 改进版本，同时监控接收
+void continuousVerifySignal(int id) {
+  IRSignal* signal = irStorage.getSignal(id);
+  if (!signal || !signal->isValid) {
+    Serial.printf("❌ 错误: 信号 ID %d 不存在\n", id);
+    return;
+  }
+  
+  Serial.printf("🔄 开始持续验证信号 ID: %d (%s)\n", id, signal->name);
+  Serial.printf("📋 协议: %s, 值: 0x%08X, 位数: %d\n", 
+               typeToString(signal->protocol, false).c_str(), signal->value, signal->bits);
+  Serial.println("⏱️ 测试时长: 10秒，发射间隔: 0.5秒");
+  Serial.println("📡 同时监控VS1838B接收器实时反应...");
+  Serial.println("====================================");
+  
+  // 保存当前状态，验证后恢复
+  SystemState previousState = currentState;
+  bool wasLearning = (currentState == LEARNING);
+  
+  currentState = TRANSMITTING;
+  
+  const unsigned long TEST_DURATION = 10000;  // 10秒
+  const unsigned long SEND_INTERVAL = 500;    // 0.5秒
+  const unsigned long RECEIVE_TIMEOUT = 400;  // 接收超时400ms
+  
+  unsigned long startTime = millis();
+  unsigned long lastSendTime = 0;
+  int sendCount = 0;
+  int sendSuccessCount = 0;
+  int receiveCount = 0;
+  int receiveMatchCount = 0;
+  
+  while (millis() - startTime < TEST_DURATION) {
+    unsigned long currentTime = millis();
+    
+    // 每0.5秒发送一次
+    if (currentTime - lastSendTime >= SEND_INTERVAL) {
+      sendCount++;
+      unsigned long remainingTime = TEST_DURATION - (currentTime - startTime);
+      
+      Serial.printf("\n🚀 [%d] 第%d次发射 (剩余%.1fs)\n", 
+                   sendCount, sendCount, remainingTime / 1000.0);
+      
+      bool sendSuccess = false;
+      
+      // 根据协议类型选择最佳发射方式
+      if (signal->protocol == UNKNOWN && signal->rawData && signal->rawLength > 0) {
+        // UNKNOWN协议使用RMT硬件发射
+        if (irTransmitter.isRMTEnabled()) {
+          Serial.println("  📡 使用RMT硬件发射器");
+        } else {
+          Serial.println("  📡 使用软件发射器");
+        }
+        sendSuccess = irTransmitter.sendSignal(signal->protocol, signal->value, signal->bits,
+                                              signal->rawData, signal->rawLength, 0);
+      } else {
+        Serial.println("  📡 使用协议发射器");
+        sendSuccess = irTransmitter.sendSignal(signal->protocol, signal->value, signal->bits,
+                                              signal->rawData, signal->rawLength, 0);
+      }
+      
+      if (sendSuccess) {
+        sendSuccessCount++;
+        Serial.printf("  ✅ 发射成功 [%d/%d]\n", sendSuccessCount, sendCount);
+      } else {
+        Serial.printf("  ❌ 发射失败 [%d/%d]\n", sendSuccessCount, sendCount);
+      }
+      
+      lastSendTime = currentTime;
+      
+      // 发射后立即监控接收器反应
+      unsigned long receiveStartTime = millis();
+      bool receivedSignal = false;
+      bool signalMatches = false;
+      
+      Serial.printf("  🔍 监控接收器反应 (超时%dms)...\n", RECEIVE_TIMEOUT);
+      
+      while (millis() - receiveStartTime < RECEIVE_TIMEOUT) {
+        if (irReceiver.isAvailable() && irReceiver.decode()) {
+          receivedSignal = true;
+          receiveCount++;
+          
+          // 获取接收到的信号数据
+          uint32_t receivedValue = irReceiver.getValue();
+          uint16_t receivedBits = irReceiver.getBits();
+          decode_type_t receivedProtocol = irReceiver.getProtocol();
+          
+          // 检查信号是否匹配
+          bool protocolMatch = (receivedProtocol == signal->protocol);
+          bool valueMatch = (receivedValue == signal->value);
+          bool bitsMatch = (receivedBits == signal->bits);
+          
+          if (protocolMatch && valueMatch && bitsMatch) {
+            signalMatches = true;
+            receiveMatchCount++;
+            Serial.printf("  ✅ 接收样本 %d: 协议=%s, 值=0x%08X, 位数=%d ✅匹配\n", 
+                         receiveCount, typeToString(receivedProtocol, false).c_str(), 
+                         receivedValue, receivedBits);
+          } else {
+            Serial.printf("  ⚠️ 接收样本 %d: 协议=%s, 值=0x%08X, 位数=%d ❌不匹配\n", 
+                         receiveCount, typeToString(receivedProtocol, false).c_str(), 
+                         receivedValue, receivedBits);
+            if (!protocolMatch) Serial.printf("    ❌ 协议不匹配: 期望%s, 实际%s\n", 
+                                             typeToString(signal->protocol, false).c_str(),
+                                             typeToString(receivedProtocol, false).c_str());
+            if (!valueMatch) Serial.printf("    ❌ 值不匹配: 期望0x%08X, 实际0x%08X\n", 
+                                          signal->value, receivedValue);
+            if (!bitsMatch) Serial.printf("    ❌ 位数不匹配: 期望%d, 实际%d\n", 
+                                         signal->bits, receivedBits);
+          }
+          
+          // 短暂延时避免重复接收同一信号
+          delay(50);
+          break;
+        }
+        delay(5);
+      }
+      
+      if (!receivedSignal) {
+        Serial.println("  ❌ 接收超时，未检测到信号");
+      }
+      
+      // 给系统一点时间处理
+      delay(50);
+    }
+    
+    // 短暂延时，避免占用太多CPU
+    delay(10);
+  }
+  
+  // 计算各种成功率
+  float sendSuccessRate = sendCount > 0 ? (float)sendSuccessCount / sendCount * 100 : 0;
+  float receiveRate = sendCount > 0 ? (float)receiveCount / sendCount * 100 : 0;
+  float matchRate = receiveCount > 0 ? (float)receiveMatchCount / receiveCount * 100 : 0;
+  float overallSuccessRate = sendCount > 0 ? (float)receiveMatchCount / sendCount * 100 : 0;
+  
+  Serial.println("\n🏁 ========== 详细验证结果总结 ==========");
+  Serial.printf("📊 发射统计:\n");
+  Serial.printf("  总发射次数: %d\n", sendCount);
+  Serial.printf("  发射成功: %d (%.1f%%)\n", sendSuccessCount, sendSuccessRate);
+  Serial.printf("  发射失败: %d\n", sendCount - sendSuccessCount);
+  
+  Serial.printf("\n� 接收统计:\n");
+  Serial.printf("  接收到信号: %d (%.1f%%)\n", receiveCount, receiveRate);
+  Serial.printf("  信号匹配: %d (%.1f%%)\n", receiveMatchCount, matchRate);
+  Serial.printf("  整体成功率: %d/%d (%.1f%%)\n", receiveMatchCount, sendCount, overallSuccessRate);
+  
+  Serial.printf("\n📈 稳定性评估:\n");
+  if (overallSuccessRate >= 90) {
+    Serial.println("🎯 优秀: 信号收发非常稳定");
+  } else if (overallSuccessRate >= 75) {
+    Serial.println("✅ 良好: 信号收发稳定性不错");
+  } else if (overallSuccessRate >= 50) {
+    Serial.println("⚠️ 一般: 信号收发稳定性有待改善");
+  } else {
+    Serial.println("❌ 差: 信号收发不稳定，建议重新学习或检查硬件");
+  }
+  
+  if (receiveRate < 50) {
+    Serial.println("💡 提示: 接收率较低，可能需要调整发射器位置或检查VS1838B连接");
+  }
+  if (matchRate < 80 && receiveCount > 0) {
+    Serial.println("💡 提示: 信号匹配率较低，可能存在信号干扰或学习时的不稳定性");
+  }
+  
+  Serial.println("=========================================");
+  
+  // 恢复状态
+  currentState = previousState;
+  
+  if (wasLearning) {
+    Serial.println("🎯 继续学习模式，请继续按遥控器测试接收...");
+  }
+  
+  if (overallSuccessRate >= 75) {
+    Serial.printf("✅ 信号 ID %d 持续验证通过，稳定性良好\n", id);
+  } else {
+    Serial.printf("⚠️ 信号 ID %d 持续验证存在问题，建议重新学习\n", id);
+  }
+}
+
+// 新增：切换RMT硬件发射器状态
+void toggleRMT() {
+  bool currentState = irTransmitter.isRMTEnabled();
+  
+  Serial.printf("🔧 当前RMT硬件发射器状态: %s\n", currentState ? "启用" : "禁用");
+  
+  if (currentState) {
+    // 当前启用，切换为禁用
+    if (irTransmitter.enableRMT(false)) {
+      Serial.println("✅ RMT硬件发射器已禁用，将使用软件发射");
+      Serial.println("💡 适用于: 调试和对比测试");
+    } else {
+      Serial.println("❌ 禁用RMT硬件发射器失败");
+    }
+  } else {
+    // 当前禁用，切换为启用
+    if (irTransmitter.enableRMT(true)) {
+      Serial.println("✅ RMT硬件发射器已启用，将用于UNKNOWN协议");
+      Serial.println("� 适用于: 提高UNKNOWN协议信号的发射稳定性");
+    } else {
+      Serial.println("❌ 启用RMT硬件发射器失败");
+    }
+  }
+  
+  Serial.println("\n🔧 RMT硬件发射器说明:");
+  Serial.println("  ✅ 启用: 使用ESP32硬件RMT模块发射原始数据(更稳定)");
+  Serial.println("  ❌ 禁用: 使用IRremoteESP8266软件发射(兼容性更好)");
+  Serial.println("  🎯 建议: UNKNOWN协议启用RMT，已知协议可禁用");
+  Serial.println();
 }
